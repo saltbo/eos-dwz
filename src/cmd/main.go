@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	router := gin.New()
+	router := gin.Default()
 	rest.SetupRouter(router)
 	router.Run(":8128")
 }
