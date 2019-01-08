@@ -1,25 +1,22 @@
 package rest
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 
+	"eos-dwz/src/option"
 	"eos-dwz/src/pkg/decimal"
 	"github.com/eoscanada/eos-go"
 	"github.com/eoscanada/eos-go/token"
 	"github.com/gin-gonic/gin"
 )
 
-const SYS_HOST = "http://localhost:8128"
 const DWZ_DECIMAL = 62
-const TRANSFER_FROM = "igetgetchain"
-const TRANSFER_TO = ""
 
-var eosCli = eos.New("https://openapi.eos.ren")
 var cache = NewCache()
+var eosCli = eos.New(option.NodeHost)
 
 type generateRequest struct {
 	URL string `json:"url"`
@@ -34,21 +31,30 @@ func generate(ctx *gin.Context) {
 		return
 	}
 
-	// URL写入区块
-	URLBase64 := base64.URLEncoding.EncodeToString([]byte(p.URL))
-	action := token.NewTransfer(TRANSFER_FROM, TRANSFER_TO, eos.NewEOSAsset(1), URLBase64)
+	if option.SendAccount == "" || option.PrivateKey == "" {
+		ctx.AbortWithError(http.StatusBadRequest, fmt.Errorf("no settings for generate api."))
+		return
+	}
 
 	signer := eos.NewKeyBag()
-	signer.ImportPrivateKey("")
+	err := signer.ImportPrivateKey(option.PrivateKey)
+	if err != nil {
+		ctx.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
 	eosCli.SetSigner(signer)
+
+	// URL写入区块
+	// eosCli.Debug = true
+	action := token.NewTransfer(option.SendAccount, option.ReceiveAccount, eos.NewEOSAsset(1), p.URL)
 	ret, err := eosCli.SignPushActions(action)
 	if err != nil {
 		ctx.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	path := decimal.Decimal2Any(int(ret.BlockNum), DWZ_DECIMAL)
-	ctx.JSON(http.StatusOK, strMap{"dwz": fmt.Sprintf("%s/%s", SYS_HOST, path)})
+	path := decimal.Decimal2Any(int(ret.Processed.BlockNum+1), DWZ_DECIMAL)
+	ctx.JSON(http.StatusOK, strMap{"dwz": fmt.Sprintf("%s/%s", option.ServerHost, path)})
 }
 
 func dwzHandler(ctx *gin.Context) {
@@ -88,7 +94,7 @@ func urlFromBlock(transactions []eos.TransactionReceipt) string {
 		for _, action := range a.Actions {
 			if action.Name == "transfer" && action.Account == "eosio.token" {
 				transfer := action.Data.(*token.Transfer)
-				if transfer.From == TRANSFER_FROM {
+				if transfer.To == option.ReceiveAccount {
 					return transfer.Memo
 				}
 			}
